@@ -3,288 +3,420 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Professional 360° Spherical Stitcher</title>
+    <title>Professional 3D 360° Stitcher</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         :root {
             --neon: #00ffcc;
-            --dark: #0a0e17;
-            --panel: rgba(13, 20, 38, 0.9);
+            --dark: #090d16;
+            --panel-bg: rgba(13, 20, 35, 0.9);
         }
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
             overflow: hidden; background-color: var(--dark);
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: white;
         }
 
-        #canvas-container { width: 100%; height: 100%; position: absolute; z-index: 1; }
-        #video-preview { display: none; }
+        #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        #webcam-video { display: none; }
 
-        /* HUD интерфейс */
-        #ui-container {
+        /* Интерфейс управления */
+        #hud {
             position: absolute; width: 100%; height: 100%; z-index: 10;
             pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px;
         }
         .panel {
-            background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.1); padding: 15px; border-radius: 20px;
+            background: var(--panel-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.08); padding: 15px; border-radius: 20px;
             pointer-events: auto; text-align: center;
         }
-
+        
         /* Кнопка затвора */
-        .shutter-container { display: flex; justify-content: center; align-items: center; margin-bottom: 10px; }
         .shutter-btn {
-            width: 76px; height: 76px; background: white; border: 5px solid var(--neon);
-            border-radius: 50%; pointer-events: auto; cursor: pointer;
-            box-shadow: 0 0 20px rgba(0, 255, 204, 0.4); transition: transform 0.1s;
+            width: 80px; height: 80px; background: white; border: 6px solid var(--neon);
+            border-radius: 50%; margin: 15px auto; pointer-events: auto;
+            box-shadow: 0 0 25px rgba(0, 255, 204, 0.4); cursor: pointer; transition: transform 0.1s;
         }
         .shutter-btn:active { transform: scale(0.9); background: var(--neon); }
 
-        /* Прицел */
-        #aim {
+        /* Центральный прицел */
+        #crosshair {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             width: 24px; height: 24px; border: 2px solid var(--neon); border-radius: 50%;
-            pointer-events: none; z-index: 5; pointer-events: none;
+            pointer-events: none; z-index: 5; box-shadow: 0 0 10px var(--neon);
         }
+        #crosshair::before { content: ''; position: absolute; top: 10px; left: 4px; width: 12px; height: 2px; background: var(--neon); }
 
         /* Экран инициализации */
-        #welcome-screen {
+        #gatekeeper {
             position: absolute; width: 100%; height: 100%; z-index: 100; background: var(--dark);
             display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center;
         }
-        .start-action {
-            background: linear-gradient(135deg, var(--neon), #00a2ff); color: black; border: none;
+        .primary-btn {
+            background: linear-gradient(135deg, var(--neon), #00b3ff); color: black; border: none;
             padding: 18px 40px; font-size: 1.1rem; font-weight: bold; border-radius: 50px;
             cursor: pointer; box-shadow: 0 0 30px rgba(0, 255, 204, 0.3); width: 100%; max-width: 290px;
         }
+
+        /* Модалка подсказок */
+        #hotspot-modal {
+            position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.85);
+            z-index: 110; display: flex; align-items: center; justify-content: center; padding: 20px; display: none;
+        }
+        .modal-box { background: #1e293b; width: 100%; max-width: 340px; padding: 25px; border-radius: 24px; pointer-events: auto; }
+        .modal-box input { width: 100%; padding: 15px; background: #0f172a; border: 1px solid #334155; border-radius: 12px; color: white; margin: 15px 0; outline: none; font-size: 1rem; }
+        .modal-box input:focus { border-color: var(--neon); }
+        .btn-row { display: flex; gap: 10px; }
+        .sec-btn { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #475569; background: transparent; color: white; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <div id="welcome-screen">
-        <h2 style="color: var(--neon); margin-bottom: 10px; letter-spacing: 1px;">3D СФЕРИЧЕСКИЙ СШИВАТЕЛЬ</h2>
-        <p style="color: #707f94; margin-bottom: 45px; font-size: 0.95rem; max-width: 320px;">
-            Скрипт захватывает кадры камеры и математически разворачивает их в бесшовную 2:1 панораму по датчикам наклона.
+    <div id="gatekeeper">
+        <h2 style="color: var(--neon); margin-bottom: 10px; letter-spacing: 1px;">3D SPHERICAL STITCHER</h2>
+        <p style="color: #94a3b8; margin-bottom: 40px; font-size: 0.95rem; max-width: 320px;">
+            Математически точная склейка кадров камеры в единую 3D-сферу по датчикам положения.
         </p>
-        <button class="start-action" id="btn-connect">Запустить модуль</button>
+        <button class="primary-btn" id="btn-start">Включить камеру</button>
     </div>
 
-    <video id="video-preview" autoplay playsinline muted></video>
-    
+    <video id="webcam-video" autoplay playsinline muted></video>
     <div id="canvas-container"></div>
-    <div id="aim"></div>
+    <div id="crosshair"></div>
 
-    <div id="ui-container" style="display: none;">
+    <div id="hud" style="display: none;">
         <div class="panel">
-            <div style="font-size: 0.75rem; color: #707f94; text-transform: uppercase; font-weight: bold;">Позиция матрицы</div>
-            <div id="telemetry" style="font-family: monospace; color: var(--neon); font-size: 1.1rem; margin-top: 4px;">YAW: 0° | PITCH: 0°</div>
+            <div style="font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; font-weight: bold;">Прогресс сборки сферы</div>
+            <div id="progress-text" style="color: var(--neon); font-weight: bold; margin-top: 4px; font-size: 1.1rem;">Заполнено секторов: 0 / 12</div>
         </div>
 
         <div>
-            <div class="shutter-container">
-                <div class="shutter-btn" id="btn-capture"></div>
+            <div class="shutter-btn" id="btn-shoot"></div>
+            <div class="panel" style="display: flex; gap: 10px; padding: 10px;">
+                <button class="sec-btn" id="btn-add-hotspot" style="border-color: var(--neon); color: var(--neon);">💡 Метка</button>
+                <button class="sec-btn" id="btn-export" style="background: var(--neon); color: black; border: none; flex: 2;">Экспорт панорамы</button>
             </div>
-            <div class="panel" style="padding: 1        const counterDisplay = document.getElementById('counter');
+        </div>
+    </div>
 
-        startBtn.addEventListener('click', async () => {
+    <div id="hotspot-modal">
+        <div class="modal-box">
+            <h3 style="margin:0; color: var(--neon);">Добавить подсказку</h3>
+            <input type="text" id="hotspot-text" placeholder="Введите описание объекта..." autocomplete="off">
+            <div class="btn-row">
+                <button class="sec-btn" id="btn-modal-cancel">Отмена</button>
+                <button class="sec-btn" id="btn-modal-save" style="background: var(--neon); color: black; border: none;">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer, videoTexture;
+        let livePreviewMesh;
+        
+        // Настройки углов обзора мобильной камеры (усредненные hFOV и vFOV для смартфонов)
+        const H_FOV = THREE.MathUtils.degToRad(60); 
+        const V_FOV = THREE.MathUtils.degToRad(40);
+        const SPHERE_RADIUS = 10;
+
+        // Данные сессии
+        let capturedPatches = [];
+        let hotspotsData = [];
+        let targetsArray = [];
+
+        // Переменные вращения (для десктоп-теста и калибровки)
+        let lon = 0, lat = 0;
+        let isUserInteracting = false, pointerX = 0, pointerY = 0, savedLon = 0, savedLat = 0;
+
+        const video = document.getElementById('webcam-video');
+        const gatekeeper = document.getElementById('gatekeeper');
+        const hud = document.getElementById('hud');
+
+        document.getElementById('btn-start').addEventListener('click', async () => {
             try {
-                // Запрашиваем заднюю камеру смартфона
                 const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
                     audio: false
                 });
                 video.srcObject = stream;
                 video.play();
 
-                // Запрос гироскопа для iOS
                 if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                     const permission = await DeviceOrientationEvent.requestPermission();
-                    if (permission === 'granted') {
-                        window.addEventListener('deviceorientation', onDeviceOrientation);
-                    }
+                    if (permission === 'granted') window.addEventListener('deviceorientation', onOrientationChange);
                 } else {
-                    window.addEventListener('deviceorientation', onDeviceOrientation);
+                    window.addEventListener('deviceorientation', onOrientationChange);
                 }
 
-                startScreen.style.display = 'none';
-                uiLayer.style.display = 'flex';
-
+                gatekeeper.style.display = 'none';
+                hud.style.display = 'flex';
                 initWebGL();
             } catch (err) {
-                alert("Доступ заблокирован. Нужен HTTPS протокол и разрешение на камеру. Ошибка: " + err.message);
+                alert("Ошибка доступа. Нужен HTTPS и разрешение на использование камеры/датчиков. Текст ошибки: " + err.message);
             }
         });
 
         function initWebGL() {
             const container = document.getElementById('canvas-container');
-
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 0);
             camera.target = new THREE.Vector3(0, 0, 0);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             container.appendChild(renderer.domElement);
 
-            // Текстура живого потока камеры
             videoTexture = new THREE.VideoTexture(video);
-            
-            // Живой экран перед глазами (привязан к камере)
-            // Создаем плоскость с соотношением сторон кадра камеры (16:9)
-            const aspect = 16 / 9;
-            const geo = new THREE.PlaneGeometry(5 * aspect, 5);
-            const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
-            livePreviewMesh = new THREE.Mesh(geo, mat);
-            
-            // Отодвигаем плоскость чуть вперед и крепим внутрь камеры
-            livePreviewMesh.position.set(0, 0, -4); 
-            camera.add(livePreviewMesh);
-            scene.add(camera);
 
-            // Обработчики для мышки/тачскрина (резервное управление, если нет гироскопа)
+            // МАТЕМАТИКА: Создаем геометрию сферического сегмента
+            // phiStart центрирует прямоугольник видео по горизонтали, thetaStart — по вертикали
+            const sphereSegmentGeo = new THREE.SphereGeometry(
+                SPHERE_RADIUS, 32, 32, 
+                -H_FOV / 2, H_FOV, 
+                Math.PI / 2 - V_FOV / 2, V_FOV
+            );
+            // Инвертируем геометрию внутрь, так как мы смотрим из центра сферы
+            sphereSegmentGeo.scale(-1, 1, 1);
+
+            // Живой предпросмотр (то, куда сейчас направлен телефон)
+            const liveMat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
+            livePreviewMesh = new THREE.Mesh(sphereSegmentGeo, liveMat);
+            scene.add(livePreviewMesh);
+
+            // Генерируем сетку визуальных ориентиров для сшивания сферы (12 секторов)
+            createCaptureGuides();
+
             document.addEventListener('pointerdown', onPointerDown);
             window.addEventListener('resize', onWindowResize);
-
             animate();
         }
 
-        // Обработка данных гироскопа смартфона
-        function onDeviceOrientation(e) {
+        // Генерация подсказок-мишеней на сфере
+        function createCaptureGuides() {
+            const guideGeo = new THREE.RingGeometry(0.8, 1, 32);
+            const guideMat = new THREE.MeshBasicMaterial({ color: 0xff9900, side: THREE.DoubleSide, wireframe: true });
+            
+            // Расставляем 8 точек по экватору и по 2 на полюсах
+            const angles = [0, 45, 90, 135, 180, 225, 270, 315];
+            angles.forEach(yawDeg => {
+                const mesh = new THREE.Mesh(guideGeo, guideMat.clone());
+                const r = SPHERE_RADIUS - 0.5;
+                const radYaw = THREE.MathUtils.degToRad(yawDeg);
+                
+                mesh.position.set(r * Math.sin(radYaw), 0, r * Math.cos(radYaw));
+                mesh.lookAt(0, 0, 0);
+                scene.add(mesh);
+                targetsArray.push({ mesh: mesh, captured: false, yaw: yawDeg, pitch: 0 });
+            });
+        }
+
+        function onOrientationChange(e) {
             if (e.alpha === null) return;
-            // Переводим углы мобильного датчика в углы обзора Three.js камеры
-            lon = e.alpha + 180; 
+            // Корректное преобразование мобильного гироскопа в углы Three.js
+            lon = e.alpha + 180;
             lat = e.beta - 90;
         }
 
         function animate() {
             requestAnimationFrame(animate);
 
-            // Ограничиваем вертикальный обзор, чтобы не перевернуться ног на голову
             lat = Math.max(-85, Math.min(85, lat));
-            
             const phi = THREE.MathUtils.degToRad(90 - lat);
             const theta = THREE.MathUtils.degToRad(lon);
 
-            // Вычисляем точку направления камеры на основе углов
             camera.target.x = Math.sin(phi) * Math.sin(theta);
             camera.target.y = Math.cos(phi);
             camera.target.z = Math.sin(phi) * Math.cos(theta);
-
             camera.lookAt(camera.target);
+
+            // Привязываем живой сегмент камеры к текущему направлению взгляда
+            if (livePreviewMesh) {
+                livePreviewMesh.rotation.set(THREE.MathUtils.degToRad(lat), THREE.MathUtils.degToRad(-lon), 0, 'YXZ');
+            }
+
             renderer.render(scene, camera);
         }
 
-        // ЛОГИКА СШИВКИ (ФИКСАЦИЯ КАДРА В СЦЕНЕ)
-        captureBtn.addEventListener('click', () => {
+        // ЛОГИКА ФИКСАЦИИ И СШИВАНИЯ СЕГМЕНТА СФЕРЫ
+        document.getElementById('btn-shoot').addEventListener('click', () => {
             if (!video.videoWidth) return;
 
-            // 1. Копируем текущий кадр из видеопотока на скрытый canvas
+            // 1. Снимаем скриншот текущей матрицы камеры
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const base64Img = canvas.toDataURL('image/jpeg', 0.85);
+
+            // 2. Создаем статичную сферическую заплатку
+            const staticTex = new THREE.CanvasTexture(canvas);
+            const staticMat = new THREE.MeshBasicMaterial({ map: staticTex, side: THREE.DoubleSide });
+            const staticPatch = new THREE.Mesh(livePreviewMesh.geometry.clone(), staticMat);
             
-            const imgData = canvas.toDataURL('image/jpeg', 0.8);
-
-            // 2. Создаем статичную 3D плоскость в пространстве сцены
-            const texture = new THREE.CanvasTexture(canvas);
-            const geo = livePreviewMesh.geometry.clone();
-            const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-            const staticPatch = new THREE.Mesh(geo, mat);
-
-            // 3. Магия позиционирования: считываем МИРОВЫЕ координаты живого экрана в этот миг
-            livePreviewMesh.getWorldPosition(staticPatch.position);
-            livePreviewMesh.getWorldQuaternion(staticPatch.quaternion);
-
-            // Добавляем готовый кусок в мировую сцену. Он останется там навсегда!
+            // Фиксируем ее строго в текущих углах пространства
+            staticPatch.rotation.copy(livePreviewMesh.rotation);
             scene.add(staticPatch);
 
-            if (navigator.vibrate) navigator.vibrate(40); // Виброотклик
+            if (navigator.vibrate) navigator.vibrate(50);
 
-            // Сохраняем данные для экспорта готового сайта
-            savedPatches.push({
-                img: imgData,
-                pos: [staticPatch.position.x, staticPatch.position.y, staticPatch.position.z],
+            // Сохраняes данные сегмента для последующего экспорта
+            capturedPatches.push({
+                img: base64Img,
                 rot: [staticPatch.rotation.x, staticPatch.rotation.y, staticPatch.rotation.z]
             });
 
-            counterDisplay.innerText = `Снято кадров: ${savedPatches.length}`;
+            // Проверяем, попали ли мы в какую-то из мишеней сшивки
+            updateTargetProgress();
         });
 
-        // ЭКСПОРТ РЕЗУЛЬТАТА ДЛЯ САЙТА
-        saveBtn.addEventListener('click', () => {
-            if (savedPatches.length === 0) {
-                alert("Сначала сделайте хотя бы пару снимков пространства!");
-                return;
-            }
+        function updateTargetProgress() {
+            let activeCount = 0;
+            targetsArray.forEach(t => {
+                let diff = Math.abs(t.yaw - (lon % 360));
+                if (diff < 25 && !t.captured) {
+                    t.captured = true;
+                    t.mesh.material.color.setHex(0x00ffcc); // Меняем цвет мишени на неоновый зеленый
+                }
+                if (t.captured) activeCount++;
+            });
+            document.getElementById('progress-text').innerText = `Заполнено секторов: ${activeCount} / ${targetsArray.length}`;
+        }
 
-            // Генерируем чистый автономный HTML плеер, воссоздающий собранную сферу
-            const exportHtml = `<!DOCTYPE html>
+        // УПРАВЛЕНИЕ МЕТКАМИ (HOTSPOTS)
+        const modal = document.getElementById('hotspot-modal');
+        document.getElementById('btn-add-hotspot').addEventListener('click', () => {
+            modal.style.display = 'flex';
+            document.getElementById('hotspot-text').focus();
+        });
+
+        document.getElementById('btn-modal-save').addEventListener('click', () => {
+            const text = document.getElementById('hotspot-text').value.trim();
+            if (text) {
+                // Вычисляем вектор направления по центру экрана (куда смотрит прицел)
+                const targetVector = new THREE.Vector3();
+                camera.getWorldDirection(targetVector);
+                
+                // Создаем 3D маркер в сцене
+                const markerGeo = new THREE.SphereGeometry(0.15, 16, 16);
+                const markerMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+                const markerMesh = new THREE.Mesh(markerGeo, markerMat);
+                
+                // Отодвигаем маркер по вектору взгляда на внутреннюю стенку сферы
+                markerMesh.position.copy(targetVector).multiplyScalar(SPHERE_RADIUS - 0.2);
+                scene.add(markerMesh);
+
+                hotspotsData.push({
+                    text: text,
+                    pos: [markerMesh.position.x, markerMesh.position.y, markerMesh.position.z]
+                });
+            }
+            closeModal();
+        });
+
+        document.getElementById('btn-modal-cancel').addEventListener('click', closeModal);
+        function closeModal() { modal.style.display = 'none'; document.getElementById('hotspot-text').value = ''; }
+
+        // ЭКСПОРТ АВТОНОМНОГО HTML-ФАЙЛА ПЛЕЕРА С СОБРАННОЙ СФЕРОЙ
+        document.getElementById('btn-export').addEventListener('click', () => {
+            if (capturedPatches.length === 0) return alert("Сначала сделайте снимки для сшивки!");
+
+            const viewerHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Собранная 3D Панорама</title>
+    <title>3D Immersive Panorama</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
-        #canvas { width: 100%; height: 100%; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+        #container { width: 100%; height: 100%; }
+        .popup { position: absolute; background: rgba(0,0,0,0.85); color: #00ffcc; padding: 10px 15px; border-radius: 8px; border: 1px solid #00ffcc; pointer-events: none; display: none; font-size: 14px; z-index: 10; transform: translate(-50%, -120%); }
     </style>
 </head>
 <body>
-    <div id="canvas"></div>
+    <div id="popup" class="popup"></div>
+    <div id="container"></div>
     <script>
-        const patchesData = ${JSON.stringify(savedPatches)};
-        let scene, camera, renderer;
-        let lon = 0, lat = 0, pointerX = 0, pointerY = 0, lonDown = 0, latDown = 0;
+        const patches = ${JSON.stringify(capturedPatches)};
+        const hotspots = ${JSON.stringify(hotspotsData)};
+        let scene, camera, renderer, raycaster, mouse;
+        let lon = 0, lat = 0, pX = 0, pY = 0, sLon = 0, sLat = 0;
 
         function init() {
-            const container = document.getElementById('canvas');
+            const container = document.getElementById('container');
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.target = new THREE.Vector3(0, 0, 0);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             container.appendChild(renderer.domElement);
 
-            // Воссоздаем все сшитые кадры обратно в 3D
-            const aspect = 16 / 9;
-            const geo = new THREE.PlaneGeometry(5 * aspect, 5);
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
 
-            patchesData.forEach(data => {
+            // Воссоздаем сферическую мозаику панорамы
+            const geo = new THREE.SphereGeometry(${SPHERE_RADIUS}, 32, 32, -${H_FOV} / 2, ${H_FOV}, Math.PI / 2 - ${V_FOV} / 2, ${V_FOV});
+            geo.scale(-1, 1, 1);
+
+            patches.forEach(p => {
                 const img = new Image();
-                img.src = data.img;
-                const texture = new THREE.Texture(img);
-                img.onload = () => { texture.needsUpdate = true; };
-
-                const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+                img.src = p.img;
+                const tex = new THREE.Texture(img);
+                img.onload = () => tex.needsUpdate = true;
+                const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
                 const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.set(data.pos[0], data.pos[1], data.pos[2]);
-                mesh.rotation.set(data.rot[0], data.rot[1], data.rot[2]);
+                mesh.rotation.set(p.rot[0], p.rot[1], p.rot[2], 'YXZ');
                 scene.add(mesh);
             });
 
+            // Воссоздаем подсказки
+            hotspots.forEach(h => {
+                const hGeo = new THREE.SphereGeometry(0.18, 16, 16);
+                const hMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+                const mesh = new THREE.Mesh(hGeo, hMat);
+                mesh.position.set(h.pos[0], h.pos[1], h.pos[2]);
+                mesh.userData = { text: h.text };
+                scene.add(mesh);
+            });
+
+            // Навигация (Мышь + Тач)
             document.addEventListener('pointerdown', e => {
-                pointerX = e.clientX; pointerY = e.clientY;
-                lonDown = lon; latDown = lat;
+                pX = e.clientX; pY = e.clientY; sLon = lon; sLat = lat;
                 document.addEventListener('pointermove', move);
             });
-            document.addEventListener('pointerup', () => document.removeEventListener('pointermove', move));
+            document.addEventListener('pointerup', () => {
+                document.removeEventListener('pointermove', move);
+                checkIntersections();
+            });
+            window.addEventListener('deviceorientation', e => { if(e.alpha) { lon = e.alpha+180; lat = e.beta-90; } });
+
+            function move(e) { lon = (pX - e.clientX) * 0.15 + sLon; lat = (e.clientY - pY) * 0.15 + sLat; }
+            window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
             
-            function move(e) {
-                lon = (pointerX - e.clientX) * 0.1 + lonDown;
-                lat = (e.clientY - pointerY) * 0.1 + latDown;
+            animate();
+        }
+
+        function checkIntersections() {
+            mouse.x = 0; mouse.y = 0; // Проверка строго по центру экрана
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+            const popup = document.getElementById('popup');
+            
+            let foundHotspot = null;
+            for(let i=0; i<intersects.length; i++) {
+                if(intersects[i].object.userData.text) { foundHotspot = intersects[i].object; break; }
             }
 
-            // Поддержка гироскопа при просмотре на мобилках
-            window.addEventListener('deviceorientation', e => {
-                if(e.alpha !== null) { lon = e.alpha + 180; lat = e.beta - 90; }
-            });
-
-            animate();
+            if(foundHotspot) {
+                popup.innerText = foundHotspot.userData.text;
+                popup.style.display = 'block';
+                popup.style.left = window.innerWidth / 2 + 'px';
+                popup.style.top = window.innerHeight / 2 + 'px';
+            } else { popup.style.display = 'none'; }
         }
 
         function animate() {
@@ -298,49 +430,29 @@
             camera.lookAt(camera.target);
             renderer.render(scene, camera);
         }
-
         window.onload = init;
     <\/script>
 </body>
 </html>`;
 
-            const blob = new Blob([exportHtml], { type: 'text/html' });
+            const blob = new Blob([viewerHtml], { type: 'text/html' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = 'ready-3d-sphere.html';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            a.href = url; a.download = 'immersive-3d-panorama.html';
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
         });
 
-        // Вспомогательный код для управления пальцем/мышкой (для тестов)
+        // Вспомогательные функции десктоп-навигации для тестов
         function onPointerDown(e) {
-            if (e.target.tagName === 'BUTTON' || e.target.classList.contains('shoot-trigger')) return;
+            if (e.target.tagName === 'BUTTON' || e.target.classList.contains('shutter-btn')) return;
             isUserInteracting = true;
-            onPointerDownPointerX = e.clientX;
-            onPointerDownPointerY = e.clientY;
-            onPointerDownLon = lon;
-            onPointerDownLat = lat;
+            pointerX = e.clientX; pointerY = e.clientY; savedLon = lon; savedLat = lat;
             document.addEventListener('pointermove', onPointerMove);
             document.addEventListener('pointerup', onPointerUp);
         }
-        function onPointerMove(e) {
-            if (isUserInteracting === true) {
-                lon = (onPointerDownPointerX - e.clientX) * 0.1 + onPointerDownLon;
-                lat = (e.clientY - onPointerDownPointerY) * 0.1 + onPointerDownLat;
-            }
-        }
-        function onPointerUp() {
-            isUserInteracting = false;
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
-        }
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
+        function onPointerMove(e) { if (isUserInteracting) { lon = (pointerX - e.clientX) * 0.1 + savedLon; lat = (e.clientY - pointerY) * 0.1 + savedLat; } }
+        function onPointerUp() { isUserInteracting = false; document.removeEventListener('pointermove', onPointerMove); document.removeEventListener('pointerup', onPointerUp); }
+        function onWindowResize() { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
     </script>
 </body>
 </html>
