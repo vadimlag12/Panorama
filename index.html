@@ -3,107 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>True 3D 360° Capture Studio</title>
+    <title>Professional 360° Spherical Stitcher</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         :root {
             --neon: #00ffcc;
-            --bg-dark: #070a13;
-            --panel: rgba(15, 22, 42, 0.85);
+            --dark: #0a0e17;
+            --panel: rgba(13, 20, 38, 0.9);
         }
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
-            overflow: hidden; background-color: var(--bg-dark);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: white;
+            overflow: hidden; background-color: var(--dark);
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: white;
         }
 
-        #canvas-container { width: 100%; height: 100%; position: absolute; top:0; left:0; z-index: 1; }
-        #webcam-video { display: none; }
+        #canvas-container { width: 100%; height: 100%; position: absolute; z-index: 1; }
+        #video-preview { display: none; }
 
-        /* Интерфейс управления */
-        #ui-layer {
+        /* HUD интерфейс */
+        #ui-container {
             position: absolute; width: 100%; height: 100%; z-index: 10;
             pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px;
         }
-        .hud {
-            background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.1); padding: 15px; border-radius: 18px;
+        .panel {
+            background: var(--panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1); padding: 15px; border-radius: 20px;
             pointer-events: auto; text-align: center;
         }
-        
-        /* Кнопка затвора (фиксации кадра) */
-        .shoot-trigger {
-            width: 84px; height: 84px; background: white; border: 6px solid var(--neon);
-            border-radius: 50%; margin: 20px auto; pointer-events: auto;
-            box-shadow: 0 0 25px rgba(0, 255, 204, 0.5); cursor: pointer;
-            display: flex; align-items: center; justify-content: center; transition: transform 0.1s;
-        }
-        .shoot-trigger:active { transform: scale(0.9); background: var(--neon); }
 
-        #crosshair {
+        /* Кнопка затвора */
+        .shutter-container { display: flex; justify-content: center; align-items: center; margin-bottom: 10px; }
+        .shutter-btn {
+            width: 76px; height: 76px; background: white; border: 5px solid var(--neon);
+            border-radius: 50%; pointer-events: auto; cursor: pointer;
+            box-shadow: 0 0 20px rgba(0, 255, 204, 0.4); transition: transform 0.1s;
+        }
+        .shutter-btn:active { transform: scale(0.9); background: var(--neon); }
+
+        /* Прицел */
+        #aim {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 20px; height: 20px; border: 2px solid var(--neon); border-radius: 50%;
-            pointer-events: none; z-index: 5; box-shadow: 0 0 8px var(--neon);
+            width: 24px; height: 24px; border: 2px solid var(--neon); border-radius: 50%;
+            pointer-events: none; z-index: 5; pointer-events: none;
         }
 
-        /* Экран старта */
-        #start-screen {
-            position: absolute; width: 100%; height: 100%; z-index: 100; background: var(--bg-dark);
+        /* Экран инициализации */
+        #welcome-screen {
+            position: absolute; width: 100%; height: 100%; z-index: 100; background: var(--dark);
             display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center;
         }
-        .btn {
-            background: linear-gradient(135deg, var(--neon), #00b3ff); color: black; border: none;
-            padding: 18px 36px; font-size: 1.1rem; font-weight: bold; border-radius: 50px;
-            cursor: pointer; box-shadow: 0 0 30px rgba(0, 255, 204, 0.4); width: 100%; max-width: 280px;
+        .start-action {
+            background: linear-gradient(135deg, var(--neon), #00a2ff); color: black; border: none;
+            padding: 18px 40px; font-size: 1.1rem; font-weight: bold; border-radius: 50px;
+            cursor: pointer; box-shadow: 0 0 30px rgba(0, 255, 204, 0.3); width: 100%; max-width: 290px;
         }
     </style>
 </head>
 <body>
 
-    <div id="start-screen">
-        <h2 style="color: var(--neon); margin-bottom: 5px;">3D Сферическая Камера</h2>
-        <p style="color: #64748b; margin-bottom: 40px; font-size: 0.95rem;">Вращайте телефон, чтобы «замостить» панораму снимками реального мира</p>
-        <button class="btn" id="start-engine-btn">Запустить камеру</button>
+    <div id="welcome-screen">
+        <h2 style="color: var(--neon); margin-bottom: 10px; letter-spacing: 1px;">3D СФЕРИЧЕСКИЙ СШИВАТЕЛЬ</h2>
+        <p style="color: #707f94; margin-bottom: 45px; font-size: 0.95rem; max-width: 320px;">
+            Скрипт захватывает кадры камеры и математически разворачивает их в бесшовную 2:1 панораму по датчикам наклона.
+        </p>
+        <button class="start-action" id="btn-connect">Запустить модуль</button>
     </div>
 
-    <video id="webcam-video" autoplay playsinline muted></video>
+    <video id="video-preview" autoplay playsinline muted></video>
+    
     <div id="canvas-container"></div>
-    <div id="crosshair"></div>
+    <div id="aim"></div>
 
-    <div id="ui-layer" style="display: none;">
-        <div class="hud" id="top-panel">
-            <div style="font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Сшивка 3D Панорамы</div>
-            <div id="counter" style="color: var(--neon); font-weight: bold; margin-top: 4px;">Снято кадров: 0</div>
+    <div id="ui-container" style="display: none;">
+        <div class="panel">
+            <div style="font-size: 0.75rem; color: #707f94; text-transform: uppercase; font-weight: bold;">Позиция матрицы</div>
+            <div id="telemetry" style="font-family: monospace; color: var(--neon); font-size: 1.1rem; margin-top: 4px;">YAW: 0° | PITCH: 0°</div>
         </div>
 
         <div>
-            <div class="shoot-trigger" id="capture-btn"></div>
-            <div class="hud" style="padding: 10px;">
-                <button id="save-studio-btn" style="background: none; border: none; color: var(--neon); font-weight: bold; font-size: 1rem; cursor: pointer; width: 100%;">
-                    💾 Сохранить 3D панораму для сайта
-                </button>
+            <div class="shutter-container">
+                <div class="shutter-btn" id="btn-capture"></div>
             </div>
-        </div>
-    </div>
-
-    <script>
-        let scene, camera, renderer, videoTexture, livePreviewMesh;
-        let savedPatches = []; // Сюда сохраняем base64 картинок и их позиции
-        
-        // Переменные для вращения
-        let lon = 0, lat = 0;
-        let isUserInteracting = false;
-        let onPointerDownPointerX = 0, onPointerDownPointerY = 0;
-        let onPointerDownLon = 0, onPointerDownLat = 0;
-
-        const video = document.getElementById('webcam-video');
-        const startBtn = document.getElementById('start-engine-btn');
-        const startScreen = document.getElementById('start-screen');
-        const uiLayer = document.getElementById('ui-layer');
-        const captureBtn = document.getElementById('capture-btn');
-        const saveBtn = document.getElementById('save-studio-btn');
-        const counterDisplay = document.getElementById('counter');
+            <div class="panel" style="padding: 1        const counterDisplay = document.getElementById('counter');
 
         startBtn.addEventListener('click', async () => {
             try {
