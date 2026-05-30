@@ -3,352 +3,516 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pro 360° Studio</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <title>Продвинутая Сшивка Панорамы</title>
     <style>
-        :root {
-            --neon: #00ffcc;
-            --warn: #ff4444;
-            --bg: #05070a;
-            --panel: rgba(10, 15, 25, 0.85);
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #0d0d11; overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            user-select: none; -webkit-user-select: none; color: #fff;
         }
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
-        body, html { width: 100%; height: 100%; overflow: hidden; background-color: var(--bg); font-family: -apple-system, sans-serif; color: white; }
-
-        #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
-        #webcam { display: none; }
-
-        /* UI Слои */
-        .ui-layer { position: absolute; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 25px 20px; transition: opacity 0.3s; }
-        
-        /* Умная подсказка наверху */
-        #smart-hint {
-            background: var(--panel); backdrop-filter: blur(10px); border-radius: 12px; padding: 12px 20px;
-            text-align: center; font-weight: 600; font-size: 0.95rem; border: 1px solid rgba(255,255,255,0.1);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5); transition: color 0.3s, border-color 0.3s; margin: 0 auto;
+        #camera-feed {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1;
         }
-
-        /* Прицел (только для режима съемки) */
-        #crosshair {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            width: 30px; height: 30px; border: 2px solid rgba(255,255,255,0.5); border-radius: 50%;
-            pointer-events: none; z-index: 5; transition: border-color 0.2s, transform 0.2s;
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;
         }
-        #crosshair.ready { border-color: var(--neon); box-shadow: 0 0 15px rgba(0,255,204,0.4); transform: translate(-50%, -50%) scale(1.1); }
-        #crosshair::after { content:''; position:absolute; top:13px; left:13px; width:4px; height:4px; background:white; border-radius:50%; }
-
-        /* Панели управления (Внизу) */
-        .controls { pointer-events: auto; display: flex; flex-direction: column; gap: 15px; }
-        .row { display: flex; justify-content: center; gap: 15px; align-items: center; }
-
+        #hints-layout {
+            position: absolute; top: 6%; left: 0; width: 100%; display: flex; justify-content: center; z-index: 3;
+        }
+        #hints {
+            background: rgba(20, 20, 25, 0.9); color: #fff; padding: 12px 24px;
+            border-radius: 50px; font-size: 1rem; text-align: center; font-weight: 600;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6); backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+        #start-screen, #result-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #141419; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 10; text-align: center; padding: 30px; box-sizing: border-box;
+        }
+        #result-screen { 
+            background: #09090b; display: none; z-index: 15; overflow-y: auto; pointer-events: auto;
+        }
         .btn {
-            background: var(--panel); border: 1px solid rgba(255,255,255,0.2); color: white; padding: 14px 24px;
-            border-radius: 12px; font-weight: bold; cursor: pointer; backdrop-filter: blur(10px); flex: 1; text-align: center;
+            padding: 16px 36px; font-size: 1rem; background: #007AFF; color: white;
+            border: none; border-radius: 30px; margin-top: 20px; cursor: pointer; font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0, 122, 255, 0.35); transition: transform 0.1s, background 0.2s;
         }
-        .btn:active { background: rgba(255,255,255,0.1); }
-        
-        .btn-primary { background: var(--neon); color: black; border: none; }
-        .btn-primary:active { transform: scale(0.96); background: #00cca3; }
+        .btn:active { transform: scale(0.96); }
+        .btn-success { background: #34c759; box-shadow: 0 4px 15px rgba(52, 199, 89, 0.35); }
+        .btn-danger { background: #ff3b30; box-shadow: 0 4px 15px rgba(255, 59, 48, 0.3); }
 
-        .shutter {
-            width: 76px; height: 76px; border-radius: 50%; background: white; border: 6px solid #e2e8f0;
-            box-shadow: 0 0 0 4px transparent; transition: all 0.15s; cursor: pointer; display: flex; justify-content: center; align-items: center;
+        #recenter-btn {
+            position: absolute; bottom: 35px; right: 25px; padding: 12px 20px;
+            background: rgba(255,255,255,0.12); color: white; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 20px; font-size: 0.85rem; z-index: 4; cursor: pointer; pointer-events: auto;
+            backdrop-filter: blur(10px); display: none;
         }
-        .shutter.ready { border-color: var(--neon); box-shadow: 0 0 20px rgba(0,255,204,0.4); }
-        .shutter:active { transform: scale(0.85); background: var(--neon); }
-
-        /* Экраны */
-        #screen-start { position: absolute; width:100%; height:100%; z-index: 100; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; pointer-events: auto; }
-        
-        .hidden { display: none !important; opacity: 0; pointer-events: none; }
+        #finish-early-btn {
+            position: absolute; bottom: 35px; left: 25px; padding: 12px 20px;
+            border: none; border-radius: 20px; font-size: 0.85rem; z-index: 4; cursor: pointer; pointer-events: auto;
+            display: none; font-weight: bold;
+        }
+        .progress-bar {
+            position: absolute; bottom: 35px; left: 50%; transform: translateX(-50%);
+            color: white; font-size: 0.9rem; background: rgba(10,10,12,0.85); padding: 12px 22px;
+            border-radius: 50px; z-index: 3; font-weight: 600; border: 1px solid rgba(255,255,255,0.1);
+        }
+        #flash {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: white; z-index: 100; opacity: 0; pointer-events: none;
+        }
+        #output-image {
+            max-width: 95%; max-height: 60%; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+            border: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
 
-    <div id="screen-start">
-        <h1 style="color: var(--neon); margin-bottom: 15px;">360° Studio</h1>
-        <p style="text-align: center; color: #94a3b8; margin-bottom: 40px; font-size: 0.95rem; line-height: 1.5;">
-            Интеллектуальная склейка панорам.<br>Система автоматически стабилизирует кадр.
+    <video id="camera-feed" autoplay playsinline muted></video>
+    <canvas id="ui-layer"></canvas>
+    <div id="flash"></div>
+
+    <div id="hints-layout">
+        <div id="hints" style="display: none;">Инициализация...</div>
+    </div>
+    
+    <div class="progress-bar" id="progress" style="display: none;">0 / 38 КАДРОВ</div>
+    <button id="recenter-btn">🔄 Сбросить</button>
+    <button id="finish-early-btn" class="btn-success">🎯 Склеить сейчас</button>
+
+    <div id="start-screen">
+        <h2 style="margin-bottom: 8px; font-size: 1.5rem;">Умная Панорама 360°</h2>
+        <p style="color: #8e8e93; max-width: 290px; font-size: 0.9rem; line-height: 1.5; margin: 0 0 20px 0;">
+            Плотная сетка захвата. Вы можете прервать съёмку и склеить полученные кадры в любой момент.
         </p>
-        <button class="btn btn-primary" id="btn-init" style="width: 100%; max-width: 300px; padding: 18px; font-size: 1.1rem; border-radius: 30px;">Активировать камеру</button>
+        <button class="btn" id="start-btn">Запустить камеру</button>
     </div>
 
-    <video id="webcam" autoplay playsinline muted></video>
-    <div id="canvas-container"></div>
-    <div id="crosshair" class="hidden"></div>
-
-    <div id="ui-capture" class="ui-layer hidden">
-        <div id="smart-hint">Анализ сенсоров...</div>
-        <div class="controls">
-            <div class="row">
-                <div class="shutter" id="btn-shoot"></div>
-            </div>
-            <div class="row" style="margin-top: 10px;">
-                <button class="btn" id="btn-to-preview">👁 Предпросмотр</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="ui-preview" class="ui-layer hidden">
-        <div id="smart-hint" style="color: var(--neon); border-color: var(--neon);">Режим просмотра (тяните пальцем)</div>
-        <div class="controls">
-            <div class="row">
-                <button class="btn" id="btn-resume">🔙 Вернуться к съемки</button>
-                <button class="btn btn-primary" id="btn-export">📥 Сохранить</button>
-            </div>
-        </div>
+    <div id="result-screen">
+        <h2 style="margin-top: 0; font-size: 1.4rem;">Готовая панорама</h2>
+        <p style="color: #8e8e93; font-size: 0.85rem; margin-top: 0;">Зажмите пальцем изображение, чтобы сохранить в галерею</p>
+        <img id="output-image" alt="Панорамный снимок">
+        <button class="btn btn-danger" id="restart-btn">Снять заново</button>
     </div>
 
     <script>
-        // Глобальные переменные стейта
-        let APP_STATE = 'INIT'; // INIT -> CAPTURE -> PREVIEW
-        let scene, camera, renderer, videoTexture;
-        let livePreviewMesh;
-        let capturedPatches = [];
+        const startBtn = document.getElementById('start-btn');
+        const recenterBtn = document.getElementById('recenter-btn');
+        const finishEarlyBtn = document.getElementById('finish-early-btn');
+        const restartBtn = document.getElementById('restart-btn');
+        const startScreen = document.getElementById('start-screen');
+        const resultScreen = document.getElementById('result-screen');
         
-        // Математика и сглаживание
-        let targetQuaternion = new THREE.Quaternion(); // То, куда стремится гироскоп
-        let isDevicePerfect = false; // Флаг идеального положения для съемки
+        const video = document.getElementById('camera-feed');
+        const canvas = document.getElementById('ui-layer');
+        const ctx = canvas.getContext('2d');
+        const hints = document.getElementById('hints');
+        const progressEl = document.getElementById('progress');
+        const flashEl = document.getElementById('flash');
+        const outputImage = document.getElementById('output-image');
 
-        // Управление в режиме предпросмотра
-        let isDragging = false, prevMouse = { x: 0, y: 0 };
-        let previewLon = 0, previewLat = 0;
+        // Буферный canvas для мгновенного захвата текстуры
+        const grabCanvas = document.createElement('canvas');
+        const grabCtx = grabCanvas.getContext('2d');
 
-        const video = document.getElementById('webcam');
-        const hintBox = document.getElementById('smart-hint');
-        const crosshair = document.getElementById('crosshair');
+        let currentIndex = 0;
+        let isCapturing = false;
+        let isStitching = false;
+        
+        let baseMatrix = null;
+        let currentMatrix = null;
+        let targets = [];
 
-        // Инициализация
-        document.getElementById('btn-init').addEventListener('click', async () => {
+        const sphereLayers = [
+            { pitch: 0, steps: 12 },   
+            { pitch: 35, steps: 9 },   
+            { pitch: -35, steps: 9 },  
+            { pitch: 70, steps: 4 },   
+            { pitch: -70, steps: 4 }   
+        ];
+
+        let renderX = 0, renderY = 0;
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Безопасный запуск медиапотока и датчиков
+        startBtn.addEventListener('click', async () => {
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                try {
+                    await DeviceOrientationEvent.requestPermission();
+                } catch (e) { console.log("Датчики заблокированы или не поддерживаются:", e); }
+            }
+
+            // Конфигурация для мобильных устройств с фолбеком
+            const options = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-                    audio: false
-                });
-                video.srcObject = stream;
-                video.play();
+                video.srcObject = await navigator.mediaDevices.getUserMedia(options);
+            } catch (err) {
+                try {
+                    // Фолбек на любую доступную камеру, если режим environment вызвал сбой
+                    video.srcObject = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                } catch (e) {
+                    return alert('Не удалось получить доступ к камере. Убедитесь, что протокол HTTPS активен.');
+                }
+            }
 
-                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
-                    const perm = await DeviceOrientationEvent.requestPermission();
-                    if (perm === 'granted') window.addEventListener('deviceorientation', handleOrientation);
-                } else {
-                    window.addEventListener('deviceorientation', handleOrientation);
+            // Ждем инициализации видеопотока, принудительно вызывая проигрывание
+            video.setAttribute('playsinline', true);
+            video.muted = true;
+            video.play().then(() => {
+                startScreen.style.display = 'none';
+                hints.style.display = 'block';
+                progressEl.style.display = 'block';
+                recenterBtn.style.display = 'block';
+
+                renderX = canvas.width / 2;
+                renderY = canvas.height / 2;
+
+                window.addEventListener('deviceorientation', handleOrientation, true);
+                requestAnimationFrame(renderLoop);
+            }).catch(e => alert("Ошибка старта видео: " + e));
+        });
+
+        // Запуск сборки при нажатии кнопки "Склеить сейчас"
+        finishEarlyBtn.addEventListener('click', () => {
+            if (currentIndex === 0) return;
+            isStitching = true;
+            window.removeEventListener('deviceorientation', handleOrientation, true);
+            processStitching();
+        });
+
+        recenterBtn.addEventListener('click', () => { baseMatrix = null; currentIndex = 0; finishEarlyBtn.style.display = 'none'; });
+
+        // Математика матриц W3C (Z-X'-Y'')
+        function getRotationMatrix(alpha, beta, gamma) {
+            const degToRad = Math.PI / 180;
+            const _x = (beta || 0) * degToRad;
+            const _y = (gamma || 0) * degToRad;
+            const _z = (alpha || 0) * degToRad;
+
+            const cX = Math.cos(_x), sX = Math.sin(_x);
+            const cY = Math.cos(_y), sY = Math.sin(_y);
+            const cZ = Math.cos(_z), sZ = Math.sin(_z);
+
+            return [
+                cZ * cY - sZ * sX * sY,   -sZ * cX,   cZ * sY + sZ * sX * cY,
+                sZ * cY + cZ * sX * sY,    cZ * cX,   sZ * sY - cZ * sX * cY,
+                -cX * sY,                  sX,        cX * cY
+            ];
+        }
+
+        function transpose3x3(m) {
+            return [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+        }
+
+        function multiplyMatrixVector(m, v) {
+            return [
+                m[0]*v[0] + m[1]*v[1] + m[2]*v[2],
+                m[3]*v[0] + m[4]*v[1] + m[5]*v[2],
+                m[6]*v[0] + m[7]*v[1] + m[8]*v[2]
+            ];
+        }
+
+        function handleOrientation(event) {
+            if (event.alpha === null || event.beta === null || event.gamma === null) return;
+            const M = getRotationMatrix(event.alpha, event.beta, event.gamma);
+
+            if (baseMatrix === null) {
+                baseMatrix = M;
+                targets = [];
+                const degToRad = Math.PI / 180;
+
+                sphereLayers.forEach(layer => {
+                    const rPitch = layer.pitch * degToRad;
+                    const stepAngle = 360 / layer.steps;
+
+                    for (let i = 0; i < layer.steps; i++) {
+                        const rYaw = (i * stepAngle) * degToRad;
+                        const localX = Math.sin(rYaw) * Math.cos(rPitch);
+                        const localY = Math.sin(rPitch);
+                        const localZ = -Math.cos(rYaw) * Math.cos(rPitch);
+
+                        const worldVec = multiplyMatrixVector(baseMatrix, [localX, localY, localZ]);
+                        targets.push({ worldVector: worldVec, id: targets.length, imageData: null, matrix: null });
+                    }
+                });
+            }
+            currentMatrix = M;
+        }
+
+        function renderLoop() {
+            if (isStitching) return;
+            if (!baseMatrix || !currentMatrix) {
+                requestAnimationFrame(renderLoop);
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height / 2;
+
+            // Статичный прицел
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(centerX, centerY, 30, 0, Math.PI * 2); ctx.stroke();
+
+            if (currentIndex >= targets.length) {
+                isStitching = true;
+                window.removeEventListener('deviceorientation', handleOrientation, true);
+                processStitching();
+                return;
+            }
+
+            const currentMatrixInv = transpose3x3(currentMatrix);
+            const F = Math.max(canvas.width, canvas.height) * 0.9;
+
+            let activeTargetCoords = null;
+            let activeAngularError = 180;
+
+            targets.forEach(target => {
+                const local = multiplyMatrixVector(currentMatrixInv, target.worldVector);
+                const x = local[0], y = local[1], z = local[2];
+                const isBehind = z >= 0;
+                const isCaptured = target.id < currentIndex;
+
+                if (!isBehind) {
+                    const scrX = centerX + (x / -z) * F;
+                    const scrY = centerY - (y / -z) * F;
+
+                    if (scrX >= 0 && scrX <= canvas.width && scrY >= 0 && scrY <= canvas.height) {
+                        ctx.beginPath();
+                        ctx.fillStyle = isCaptured ? 'rgba(48, 209, 88, 0.6)' : 'rgba(255, 255, 255, 0.25)';
+                        ctx.arc(scrX, scrY, isCaptured ? 4 : 5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                 }
 
-                document.getElementById('screen-start').classList.add('hidden');
-                switchToCapture();
-                initEngine();
-            } catch (err) {
-                alert("Ошибка доступа. Убедитесь, что открыли сайт по HTTPS. " + err.message);
-            }
-        });
-
-        // Обработка Гироскопа (Без Gimbal Lock)
-        function handleOrientation(e) {
-            if (APP_STATE !== 'CAPTURE' || e.alpha === null) return;
-            
-            // Умные подсказки: проверяем завал горизонта (Beta)
-            // Идеальное положение телефона вертикально: beta ~ 90 (плюс-минус 15 градусов)
-            if (e.beta < 70) {
-                updateHint("Отодвиньте камеру назад (поднимите телефон)", false);
-            } else if (e.beta > 110) {
-                updateHint("Наклоните телефон вперед", false);
-            } else {
-                updateHint("✅ Идеальный ракурс, можно снимать", true);
-            }
-
-            // Конвертация сенсоров в стабильный Кватернион
-            const euler = new THREE.Euler();
-            euler.set(THREE.MathUtils.degToRad(e.beta - 90), THREE.MathUtils.degToRad(e.alpha + 180), 0, 'YXZ');
-            targetQuaternion.setFromEuler(euler);
-        }
-
-        function updateHint(text, isReady) {
-            isDevicePerfect = isReady;
-            hintBox.innerText = text;
-            if (isReady) {
-                hintBox.style.color = "var(--neon)";
-                hintBox.style.borderColor = "var(--neon)";
-                crosshair.classList.add('ready');
-                document.getElementById('btn-shoot').classList.add('ready');
-            } else {
-                hintBox.style.color = "var(--warn)";
-                hintBox.style.borderColor = "rgba(255, 68, 68, 0.5)";
-                crosshair.classList.remove('ready');
-                document.getElementById('btn-shoot').classList.remove('ready');
-            }
-        }
-
-        function initEngine() {
-            const container = document.getElementById('canvas-container');
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-            
-            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false }); // preserve отключен для экономии памяти
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Защита от перегруза на 4K экранах
-            container.appendChild(renderer.domElement);
-
-            videoTexture = new THREE.VideoTexture(video);
-            
-            // Создаем живой видоискатель (Экран перед глазами)
-            // Размеры подогнаны под FOV камеры смартфона (~ 60x40 градусов)
-            const geo = new THREE.SphereGeometry(10, 32, 32, -0.6, 1.2, Math.PI/2 - 0.4, 0.8);
-            geo.scale(-1, 1, 1); // Инвертируем внутрь
-            const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
-            livePreviewMesh = new THREE.Mesh(geo, mat);
-            
-            // Привязываем экран к камере намертво
-            camera.add(livePreviewMesh);
-            scene.add(camera);
-
-            // Обработчики сенсора (мышь/палец) для предпросмотра
-            container.addEventListener('pointerdown', e => {
-                if (APP_STATE !== 'PREVIEW') return;
-                isDragging = true; prevMouse = { x: e.clientX, y: e.clientY };
+                if (target.id === currentIndex) {
+                    activeAngularError = Math.acos(-z / Math.hypot(x, y, z)) * (180 / Math.PI);
+                    let scrX, scrY;
+                    if (!isBehind) {
+                        scrX = centerX + (x / -z) * F;
+                        scrY = centerY - (y / -z) * F;
+                    } else {
+                        const edgeAngle = Math.atan2(y, x);
+                        scrX = centerX + Math.cos(edgeAngle) * (centerX * 0.82);
+                        scrY = centerY - Math.sin(edgeAngle) * (centerY * 0.82);
+                    }
+                    activeTargetCoords = { x: scrX, y: scrY, isBehind, x_loc: x, y_loc: y };
+                }
             });
-            container.addEventListener('pointermove', e => {
-                if (!isDragging || APP_STATE !== 'PREVIEW') return;
-                previewLon += (prevMouse.x - e.clientX) * 0.2;
-                previewLat += (e.clientY - prevMouse.y) * 0.2;
-                previewLat = Math.max(-85, Math.min(85, previewLat));
-                prevMouse = { x: e.clientX, y: e.clientY };
-            });
-            container.addEventListener('pointerup', () => isDragging = false);
-            window.addEventListener('resize', () => { camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
 
-            animate();
-        }
+            if (activeTargetCoords) {
+                const isAligned = activeAngularError < 2.5;
 
-        function animate() {
-            requestAnimationFrame(animate);
+                renderX += (activeTargetCoords.x - renderX) * 0.25;
+                renderY += (activeTargetCoords.y - renderY) * 0.25;
 
-            if (APP_STATE === 'CAPTURE') {
-                // Плавное следование камеры за сенсором (убирает микро-тряску)
-                camera.quaternion.slerp(targetQuaternion, 0.15);
-            } else if (APP_STATE === 'PREVIEW') {
-                // Управление пальцем
-                const phi = THREE.MathUtils.degToRad(90 - previewLat);
-                const theta = THREE.MathUtils.degToRad(previewLon);
-                const target = new THREE.Vector3( Math.sin(phi)*Math.sin(theta), Math.cos(phi), Math.sin(phi)*Math.cos(theta) );
-                camera.lookAt(target);
+                ctx.strokeStyle = isAligned ? '#34c759' : (activeTargetCoords.isBehind ? 'rgba(255, 149, 0, 0.3)' : '#ff9500');
+                ctx.lineWidth = isAligned ? 5 : 3;
+                ctx.beginPath(); ctx.arc(renderX, renderY, isAligned ? 10 : 18, 0, Math.PI * 2); ctx.stroke();
+
+                if (!isCapturing) {
+                    if (isAligned) {
+                        hints.innerText = "Замрите...";
+                        hints.style.backgroundColor = "#34c759";
+                        executeFrameGrab();
+                    } else {
+                        hints.style.backgroundColor = "rgba(15, 15, 20, 0.85)";
+                        if (activeTargetCoords.isBehind) {
+                            hints.innerText = "Развернитесь назад 🔄";
+                        } else if (Math.abs(activeTargetCoords.x_loc) > Math.abs(activeTargetCoords.y_loc)) {
+                            hints.innerText = activeTargetCoords.x_loc > 0 ? "Повернитесь вправо ➡️" : "⬅️ Повернитесь влево";
+                        } else {
+                            hints.innerText = activeTargetCoords.y_loc > 0 ? "Выше ⬆️" : "Ниже ⬇️";
+                        }
+                    }
+                }
             }
 
-            renderer.render(scene, camera);
+            requestAnimationFrame(renderLoop);
         }
 
-        // --- ЛОГИКА КНОПОК ---
+        function executeFrameGrab() {
+            isCapturing = true;
 
-        // 1. СДЕЛАТЬ КАДР
-        document.getElementById('btn-shoot').addEventListener('click', () => {
-            if (!video.videoWidth) return;
+            flashEl.style.transition = 'none'; flashEl.style.opacity = '1';
 
-            // Оптимизация памяти: делаем снимок в пониженном разрешении
-            const maxRes = 1024;
-            const aspect = video.videoWidth / video.videoHeight;
-            const cWidth = maxRes; const cHeight = maxRes / aspect;
+            grabCanvas.width = video.videoWidth || 1280;
+            grabCanvas.height = video.videoHeight || 720;
+            grabCtx.drawImage(video, 0, 0, grabCanvas.width, grabCanvas.height);
             
-            const canvas = document.createElement('canvas');
-            canvas.width = cWidth; canvas.height = cHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0, cWidth, cHeight);
-            const b64 = canvas.toDataURL('image/jpeg', 0.8); // 80% качество, JPEG легче PNG
+            // Фиксируем снимок и текущую точную матрицу гироскопа
+            targets[currentIndex].imageData = grabCanvas.toDataURL('image/jpeg', 0.9);
+            targets[currentIndex].matrix = [...currentMatrix];
 
-            // Создаем "заплатку" на сцене
-            const patchTex = new THREE.CanvasTexture(canvas);
-            const patchMat = new THREE.MeshBasicMaterial({ map: patchTex, side: THREE.DoubleSide });
-            
-            // Фикс Z-Fighting: каждый следующий слой делаем чуть-чуть больше в радиусе (отодвигаем от центра)
-            // Live Preview висит на радиусе 10. Сшитые куски висят на радиусе 10.1, 10.2, и тд.
-            const offsetRadius = 10.1 + (capturedPatches.length * 0.05); 
-            const patchGeo = new THREE.SphereGeometry(offsetRadius, 32, 32, -0.6, 1.2, Math.PI/2 - 0.4, 0.8);
-            patchGeo.scale(-1, 1, 1);
-            
-            const patchMesh = new THREE.Mesh(patchGeo, patchMat);
-            // Применяем текущий поворот камеры к заплатке в мировых координатах
-            camera.getWorldQuaternion(patchMesh.quaternion); 
-            scene.add(patchMesh);
+            setTimeout(() => {
+                flashEl.style.transition = 'opacity 0.3s ease-out'; flashEl.style.opacity = '0';
 
-            capturedPatches.push({ img: b64, quat: patchMesh.quaternion.toArray(), rad: offsetRadius });
+                currentIndex++;
+                progressEl.innerText = `${currentIndex} / ${targets.length} КАДРОВ`;
+                finishEarlyBtn.style.display = 'block'; // Показываем кнопку досрочной склейки
 
-            if(navigator.vibrate) navigator.vibrate(50);
-            
-            // Визуальный эффект вспышки
-            const flash = document.createElement('div');
-            flash.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;background:white;z-index:99;opacity:1;transition:opacity 0.3s;";
-            document.body.appendChild(flash);
-            setTimeout(() => flash.style.opacity = '0', 50);
-            setTimeout(() => flash.remove(), 350);
-        });
-
-        // 2. ПЕРЕХОД В РЕЖИМ ПРЕДПРОСМОТРА
-        document.getElementById('btn-to-preview').addEventListener('click', () => {
-            APP_STATE = 'PREVIEW';
-            document.getElementById('ui-capture').classList.add('hidden');
-            document.getElementById('ui-preview').classList.remove('hidden');
-            crosshair.classList.add('hidden');
-            livePreviewMesh.visible = false; // Прячем живую камеру, чтобы видеть только результат
-            
-            // Инициализируем стартовую точку для пальца на основе текущего поворота
-            const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
-            previewLon = THREE.MathUtils.radToDeg(euler.y);
-            previewLat = Math.max(-85, Math.min(85, 90 - THREE.MathUtils.radToDeg(Math.acos(camera.getWorldDirection(new THREE.Vector3()).y))));
-        });
-
-        // 3. ВОЗВРАТ К СЪЕМКЕ
-        document.getElementById('btn-resume').addEventListener('click', switchToCapture);
-
-        function switchToCapture() {
-            APP_STATE = 'CAPTURE';
-            document.getElementById('ui-preview').classList.add('hidden');
-            document.getElementById('ui-capture').classList.remove('hidden');
-            crosshair.classList.remove('hidden');
-            if (livePreviewMesh) livePreviewMesh.visible = true;
+                setTimeout(() => { isCapturing = false; }, 900);
+            }, 50);
         }
 
-        // 4. ЭКСПОРТ ПРОЕКТА
-        document.getElementById('btn-export').addEventListener('click', () => {
-            if (capturedPatches.length === 0) return alert("Вы не сделали ни одного кадра.");
+        // ПРОДВИНУТАЯ СШИВКА (Обратное равнопромежуточное проецирование)
+        function processStitching() {
+            // Отсекаем только реально сделанные кадры
+            const capturedFrames = targets.filter(t => t.imageData !== null);
+            if (capturedFrames.length === 0) {
+                alert("Не сделано ни одного кадра для склейки.");
+                resetSession();
+                return;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            progressEl.style.display = 'none';
+            recenterBtn.style.display = 'none';
+            finishEarlyBtn.style.display = 'none';
             
-            alert("Подготовка сцены к скачиванию. Пожалуйста, подождите...");
-            const viewerHtml = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>360 Viewer</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>
-<style>body{margin:0;overflow:hidden;background:#000;}</style></head><body>
-<script>
-    const patches = ${JSON.stringify(capturedPatches)};
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 0.1, 100);
-    const renderer = new THREE.WebGLRenderer({antialias:true});
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
+            hints.innerText = "Подготовка к сшивке...";
+            hints.style.backgroundColor = "#ff9500";
 
-    patches.forEach(p => {
-        const tex = new THREE.TextureLoader().load(p.img);
-        const geo = new THREE.SphereGeometry(p.rad, 32, 32, -0.6, 1.2, Math.PI/2 - 0.4, 0.8);
-        geo.scale(-1,1,1);
-        const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({map: tex, side: THREE.DoubleSide}));
-        mesh.quaternion.fromArray(p.quat);
-        scene.add(mesh);
-    });
+            // Разрешение итоговой панорамы (пропорция 2:1)
+            const outW = 1600;
+            const outH = 800;
+            
+            const stitchCanvas = document.createElement('canvas');
+            stitchCanvas.width = outW; stitchCanvas.height = outH;
+            const sCtx = stitchCanvas.getContext('2d');
+            const outputBuffer = sCtx.createImageData(outW, outH);
 
-    let lon=0, lat=0, isDrag=false, pX=0, pY=0;
-    window.addEventListener('pointerdown', e => { isDrag=true; pX=e.clientX; pY=e.clientY; });
-    window.addEventListener('pointermove', e => { if(isDrag) { lon += (pX-e.clientX)*0.15; lat += (e.clientY-pY)*0.15; lat=Math.max(-85,Math.min(85,lat)); pX=e.clientX; pY=e.clientY; }});
-    window.addEventListener('pointerup', () => isDrag=false);
-    
-    function anim() { requestAnimationFrame(anim);
-        const phi=THREE.MathUtils.degToRad(90-lat), theta=THREE.MathUtils.degToRad(lon);
-        camera.lookAt(Math.sin(phi)*Math.sin(theta), Math.cos(phi), Math.sin(phi)*Math.cos(theta));
-        renderer.render(scene, camera); }
-    anim();
-<\/script></body></html>`;
+            let loaded = 0;
 
-            const blob = new Blob([viewerHtml], { type: 'text/html' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = 'my-360-pano.html';
-            a.click();
-        });
+            // Загружаем растровые данные всех кадров в оперативную память
+            capturedFrames.forEach(frame => {
+                const img = new Image();
+                img.src = frame.imageData;
+                img.onload = () => {
+                    const c = document.createElement('canvas');
+                    c.width = img.width; c.height = img.height;
+                    const cx = c.getContext('2d');
+                    cx.drawImage(img, 0, 0);
+                    
+                    frame.pixelData = cx.getImageData(0, 0, c.width, c.height);
+                    frame.w = c.width; frame.h = c.h;
+                    frame.invM = transpose3x3(frame.matrix);
+                    frame.focal = Math.max(c.width, c.height) * 0.85; // Фокусное расстояние объектива
+
+                    loaded++;
+                    if (loaded === capturedFrames.length) {
+                        runStitchCoreLoop(capturedFrames, outputBuffer, stitchCanvas, sCtx, outW, outH);
+                    }
+                };
+            });
+        }
+
+        function runStitchCoreLoop(frames, outputBuffer, stitchCanvas, sCtx, outW, outH) {
+            let currentY = 0;
+            const data = outputBuffer.data;
+
+            function renderRowsChunk() {
+                // Обрабатываем панораму пачками по 25 строк, чтобы не замораживать интерфейс телефона
+                const endY = Math.min(currentY + 25, outH);
+
+                for (; currentY < endY; currentY++) {
+                    // Перевод координаты Y холста в угол широты (Latitude: от -PI/2 до PI/2)
+                    const lat = (currentY / outH) * Math.PI - Math.PI / 2;
+                    const cosLat = Math.cos(lat);
+                    const sinLat = Math.sin(lat);
+
+                    for (let x = 0; x < outW; x++) {
+                        // Перевод координаты X холста в угол долготы (Longitude: от -PI до PI)
+                        const lon = (x / outW) * 2 * Math.PI - Math.PI;
+
+                        // Вычисляем 3D-вектор направления луча из центра сферы
+                        const wx = cosLat * Math.sin(lon);
+                        const wy = sinLat;
+                        const wz = -cosLat * Math.cos(lon);
+
+                        let finalR = 0, finalG = 0, finalB = 0;
+                        let maxCloseness = -1; 
+                        let found = false;
+
+                        // Ищем, в какой из сделанных кадров попадает этот вектор
+                        for (let i = 0; i < frames.length; i++) {
+                            const f = frames[i];
+                            // Умножаем вектор на инвертированную матрицу кадра (перенос в локальное пространство камеры)
+                            const lx = f.invM[0]*wx + f.invM[1]*wy + f.invM[2]*wz;
+                            const ly = f.invM[3]*wx + f.invM[4]*wy + f.invM[5]*wz;
+                            const lz = f.invM[6]*wx + f.invM[7]*wy + f.invM[8]*wz;
+
+                            if (lz < 0) { // Если точка лежит перед объективом
+                                // Перспективная проекция на плоскость матрицы камеры
+                                const cx = Math.floor(f.w / 2 + (lx / -lz) * f.focal);
+                                const cy = Math.floor(f.h / 2 - (ly / -lz) * f.focal);
+
+                                if (cx >= 0 && cx < f.w && cy >= 0 && cy < f.h) {
+                                    // Продвинутый весовой критерий: чем ближе луч к оптической оси (-lz близок к 1),
+                                    // тем меньше оптических дисторсий. Выбираем лучший пиксель.
+                                    if (-lz > maxCloseness) {
+                                        maxCloseness = -lz;
+                                        const srcIdx = (cy * f.w + cx) * 4;
+                                        finalR = f.pixelData.data[srcIdx];
+                                        finalG = f.pixelData.data[srcIdx+1];
+                                        finalB = f.pixelData.data[srcIdx+2];
+                                        found = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        const outIdx = (currentY * outW + x) * 4;
+                        data[outIdx]   = found ? finalR : 18;  // Если пиксель не снят — красим в темно-серый
+                        data[outIdx+1] = found ? finalG : 18;
+                        data[outIdx+2] = found ? finalB : 22;
+                        data[outIdx+3] = 255;
+                    }
+                }
+
+                hints.innerText = `Сшивка матрицы: ${Math.floor((currentY / outH) * 100)}%`;
+
+                if (currentY < outH) {
+                    setTimeout(renderRowsChunk, 1);
+                } else {
+                    // Конец сшивки
+                    sCtx.putImageData(outputBuffer, 0, 0);
+                    
+                    // Гасим камеру для экономии заряда батареи
+                    if (video.srcObject) {
+                        video.srcObject.getTracks().forEach(track => track.stop());
+                    }
+
+                    hints.style.display = 'none';
+                    outputImage.src = stitchCanvas.toDataURL('image/jpeg', 0.95);
+                    resultScreen.style.display = 'flex';
+                }
+            }
+
+            renderRowsChunk();
+        }
+
+        function resetSession() {
+            resultScreen.style.display = 'none';
+            startScreen.style.display = 'flex';
+            baseMatrix = null;
+            currentIndex = 0;
+            targets = [];
+            isStitching = false;
+            finishEarlyBtn.style.display = 'none';
+        }
+
+        restartBtn.addEventListener('click', resetSession);
     </script>
 </body>
 </html>
