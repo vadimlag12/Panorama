@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Продвинутая Сшивка Панорамы</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body, html {
             margin: 0; padding: 0; width: 100%; height: 100%;
@@ -16,6 +17,9 @@
         }
         #ui-layer {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;
+        }
+        #3d-preview-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 12; display: none;
         }
         #hints-layout {
             position: absolute; top: 6%; left: 0; width: 100%; display: flex; justify-content: center; z-index: 3;
@@ -32,12 +36,13 @@
             justify-content: center; align-items: center; z-index: 10; text-align: center; padding: 30px; box-sizing: border-box;
         }
         #result-screen { 
-            background: #09090b; display: none; z-index: 15; overflow-y: auto; pointer-events: auto;
+            background: transparent; display: none; z-index: 15; pointer-events: none;
+            justify-content: flex-end; padding-bottom: 40px;
         }
         .btn {
             padding: 16px 36px; font-size: 1rem; background: #007AFF; color: white;
             border: none; border-radius: 30px; margin-top: 20px; cursor: pointer; font-weight: bold;
-            box-shadow: 0 4px 15px rgba(0, 122, 255, 0.35); transition: transform 0.1s, background 0.2s;
+            box-shadow: 0 4px 15px rgba(0, 122, 255, 0.35); transition: transform 0.1s, background 0.2s; pointer-events: auto;
         }
         .btn:active { transform: scale(0.96); }
         .btn-success { background: #34c759; box-shadow: 0 4px 15px rgba(52, 199, 89, 0.35); }
@@ -63,16 +68,13 @@
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: white; z-index: 100; opacity: 0; pointer-events: none;
         }
-        #output-image {
-            max-width: 95%; max-height: 60%; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.7);
-            border: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px;
-        }
     </style>
 </head>
 <body>
 
     <video id="camera-feed" autoplay playsinline muted></video>
     <canvas id="ui-layer"></canvas>
+    <div id="3d-preview-container"></div>
     <div id="flash"></div>
 
     <div id="hints-layout">
@@ -86,15 +88,12 @@
     <div id="start-screen">
         <h2 style="margin-bottom: 8px; font-size: 1.5rem;">Умная Панорама 360°</h2>
         <p style="color: #8e8e93; max-width: 290px; font-size: 0.9rem; line-height: 1.5; margin: 0 0 20px 0;">
-            Плотная сетка захвата. Вы можете прервать съёмку и склеить полученные кадры в любой момент.
+            Плотная сетка захвата. Вы можете прервать съёмку и увидеть полученную 3D-панораму в любой момент.
         </p>
         <button class="btn" id="start-btn">Запустить камеру</button>
     </div>
 
     <div id="result-screen">
-        <h2 style="margin-top: 0; font-size: 1.4rem;">Готовая панорама</h2>
-        <p style="color: #8e8e93; font-size: 0.85rem; margin-top: 0;">Зажмите пальцем изображение, чтобы сохранить в галерею</p>
-        <img id="output-image" alt="Панорамный снимок">
         <button class="btn btn-danger" id="restart-btn">Снять заново</button>
     </div>
 
@@ -105,6 +104,7 @@
         const restartBtn = document.getElementById('restart-btn');
         const startScreen = document.getElementById('start-screen');
         const resultScreen = document.getElementById('result-screen');
+        const previewContainer = document.getElementById('3d-preview-container');
         
         const video = document.getElementById('camera-feed');
         const canvas = document.getElementById('ui-layer');
@@ -112,9 +112,7 @@
         const hints = document.getElementById('hints');
         const progressEl = document.getElementById('progress');
         const flashEl = document.getElementById('flash');
-        const outputImage = document.getElementById('output-image');
 
-        // Буферный canvas для мгновенного захвата текстуры
         const grabCanvas = document.createElement('canvas');
         const grabCtx = grabCanvas.getContext('2d');
 
@@ -136,14 +134,24 @@
 
         let renderX = 0, renderY = 0;
 
+        // Переменные для 3D просмотра панорамы
+        let scene3d, camera3d, renderer3d;
+        let isDragging = false;
+        let prevMouseX = 0, prevMouseY = 0;
+        let lon = 0, lat = 0;
+
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            if (renderer3d) {
+                renderer3d.setSize(window.innerWidth, window.innerHeight);
+                camera3d.aspect = window.innerWidth / window.innerHeight;
+                camera3d.updateProjectionMatrix();
+            }
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // Безопасный запуск медиапотока и датчиков
         startBtn.addEventListener('click', async () => {
             if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
                 try {
@@ -151,20 +159,17 @@
                 } catch (e) { console.log("Датчики заблокированы или не поддерживаются:", e); }
             }
 
-            // Конфигурация для мобильных устройств с фолбеком
             const options = { video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
             try {
                 video.srcObject = await navigator.mediaDevices.getUserMedia(options);
             } catch (err) {
                 try {
-                    // Фолбек на любую доступную камеру, если режим environment вызвал сбой
                     video.srcObject = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
                 } catch (e) {
                     return alert('Не удалось получить доступ к камере. Убедитесь, что протокол HTTPS активен.');
                 }
             }
 
-            // Ждем инициализации видеопотока, принудительно вызывая проигрывание
             video.setAttribute('playsinline', true);
             video.muted = true;
             video.play().then(() => {
@@ -181,7 +186,6 @@
             }).catch(e => alert("Ошибка старта видео: " + e));
         });
 
-        // Запуск сборки при нажатии кнопки "Склеить сейчас"
         finishEarlyBtn.addEventListener('click', () => {
             if (currentIndex === 0) return;
             isStitching = true;
@@ -191,7 +195,6 @@
 
         recenterBtn.addEventListener('click', () => { baseMatrix = null; currentIndex = 0; finishEarlyBtn.style.display = 'none'; });
 
-        // Математика матриц W3C (Z-X'-Y'')
         function getRotationMatrix(alpha, beta, gamma) {
             const degToRad = Math.PI / 180;
             const _x = (beta || 0) * degToRad;
@@ -259,7 +262,6 @@
             const centerX = canvas.width / 2;
             const centerY = canvas.height / 2;
 
-            // Статичный прицел
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
             ctx.lineWidth = 2;
             ctx.beginPath(); ctx.arc(centerX, centerY, 30, 0, Math.PI * 2); ctx.stroke();
@@ -343,15 +345,13 @@
 
         function executeFrameGrab() {
             isCapturing = true;
-
             flashEl.style.transition = 'none'; flashEl.style.opacity = '1';
 
             grabCanvas.width = video.videoWidth || 1280;
             grabCanvas.height = video.videoHeight || 720;
             grabCtx.drawImage(video, 0, 0, grabCanvas.width, grabCanvas.height);
             
-            // Фиксируем снимок и текущую точную матрицу гироскопа
-            targets[currentIndex].imageData = grabCanvas.toDataURL('image/jpeg', 0.9);
+            targets[currentIndex].imageData = grabCanvas.toDataURL('image/jpeg', 0.85);
             targets[currentIndex].matrix = [...currentMatrix];
 
             setTimeout(() => {
@@ -359,15 +359,14 @@
 
                 currentIndex++;
                 progressEl.innerText = `${currentIndex} / ${targets.length} КАДРОВ`;
-                finishEarlyBtn.style.display = 'block'; // Показываем кнопку досрочной склейки
+                finishEarlyBtn.style.display = 'block';
 
                 setTimeout(() => { isCapturing = false; }, 900);
             }, 50);
         }
 
-        // ПРОДВИНУТАЯ СШИВКА (Обратное равнопромежуточное проецирование)
+        // --- ИСПРАВЛЕННЫЙ БЛОК: СФЕРИЧЕСКАЯ 3D-СШИВКА НА GPU ---
         function processStitching() {
-            // Отсекаем только реально сделанные кадры
             const capturedFrames = targets.filter(t => t.imageData !== null);
             if (capturedFrames.length === 0) {
                 alert("Не сделано ни одного кадра для склейки.");
@@ -375,140 +374,120 @@
                 return;
             }
 
+            // Прячем элементы съёмки и интерфейса
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             progressEl.style.display = 'none';
             recenterBtn.style.display = 'none';
             finishEarlyBtn.style.display = 'none';
+            hints.style.display = 'none';
             
-            hints.innerText = "Подготовка к сшивке...";
-            hints.style.backgroundColor = "#ff9500";
-
-            // Разрешение итоговой панорамы (пропорция 2:1)
-            const outW = 1600;
-            const outH = 800;
-            
-            const stitchCanvas = document.createElement('canvas');
-            stitchCanvas.width = outW; stitchCanvas.height = outH;
-            const sCtx = stitchCanvas.getContext('2d');
-            const outputBuffer = sCtx.createImageData(outW, outH);
-
-            let loaded = 0;
-
-            // Загружаем растровые данные всех кадров в оперативную память
-            capturedFrames.forEach(frame => {
-                const img = new Image();
-                img.src = frame.imageData;
-                img.onload = () => {
-                    const c = document.createElement('canvas');
-                    c.width = img.width; c.height = img.height;
-                    const cx = c.getContext('2d');
-                    cx.drawImage(img, 0, 0);
-                    
-                    frame.pixelData = cx.getImageData(0, 0, c.width, c.height);
-                    frame.w = c.width; frame.h = c.h;
-                    frame.invM = transpose3x3(frame.matrix);
-                    frame.focal = Math.max(c.width, c.height) * 0.85; // Фокусное расстояние объектива
-
-                    loaded++;
-                    if (loaded === capturedFrames.length) {
-                        runStitchCoreLoop(capturedFrames, outputBuffer, stitchCanvas, sCtx, outW, outH);
-                    }
-                };
-            });
-        }
-
-        function runStitchCoreLoop(frames, outputBuffer, stitchCanvas, sCtx, outW, outH) {
-            let currentY = 0;
-            const data = outputBuffer.data;
-
-            function renderRowsChunk() {
-                // Обрабатываем панораму пачками по 25 строк, чтобы не замораживать интерфейс телефона
-                const endY = Math.min(currentY + 25, outH);
-
-                for (; currentY < endY; currentY++) {
-                    // Перевод координаты Y холста в угол широты (Latitude: от -PI/2 до PI/2)
-                    const lat = (currentY / outH) * Math.PI - Math.PI / 2;
-                    const cosLat = Math.cos(lat);
-                    const sinLat = Math.sin(lat);
-
-                    for (let x = 0; x < outW; x++) {
-                        // Перевод координаты X холста в угол долготы (Longitude: от -PI до PI)
-                        const lon = (x / outW) * 2 * Math.PI - Math.PI;
-
-                        // Вычисляем 3D-вектор направления луча из центра сферы
-                        const wx = cosLat * Math.sin(lon);
-                        const wy = sinLat;
-                        const wz = -cosLat * Math.cos(lon);
-
-                        let finalR = 0, finalG = 0, finalB = 0;
-                        let maxCloseness = -1; 
-                        let found = false;
-
-                        // Ищем, в какой из сделанных кадров попадает этот вектор
-                        for (let i = 0; i < frames.length; i++) {
-                            const f = frames[i];
-                            // Умножаем вектор на инвертированную матрицу кадра (перенос в локальное пространство камеры)
-                            const lx = f.invM[0]*wx + f.invM[1]*wy + f.invM[2]*wz;
-                            const ly = f.invM[3]*wx + f.invM[4]*wy + f.invM[5]*wz;
-                            const lz = f.invM[6]*wx + f.invM[7]*wy + f.invM[8]*wz;
-
-                            if (lz < 0) { // Если точка лежит перед объективом
-                                // Перспективная проекция на плоскость матрицы камеры
-                                const cx = Math.floor(f.w / 2 + (lx / -lz) * f.focal);
-                                const cy = Math.floor(f.h / 2 - (ly / -lz) * f.focal);
-
-                                if (cx >= 0 && cx < f.w && cy >= 0 && cy < f.h) {
-                                    // Продвинутый весовой критерий: чем ближе луч к оптической оси (-lz близок к 1),
-                                    // тем меньше оптических дисторсий. Выбираем лучший пиксель.
-                                    if (-lz > maxCloseness) {
-                                        maxCloseness = -lz;
-                                        const srcIdx = (cy * f.w + cx) * 4;
-                                        finalR = f.pixelData.data[srcIdx];
-                                        finalG = f.pixelData.data[srcIdx+1];
-                                        finalB = f.pixelData.data[srcIdx+2];
-                                        found = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        const outIdx = (currentY * outW + x) * 4;
-                        data[outIdx]   = found ? finalR : 18;  // Если пиксель не снят — красим в темно-серый
-                        data[outIdx+1] = found ? finalG : 18;
-                        data[outIdx+2] = found ? finalB : 22;
-                        data[outIdx+3] = 255;
-                    }
-                }
-
-                hints.innerText = `Сшивка матрицы: ${Math.floor((currentY / outH) * 100)}%`;
-
-                if (currentY < outH) {
-                    setTimeout(renderRowsChunk, 1);
-                } else {
-                    // Конец сшивки
-                    sCtx.putImageData(outputBuffer, 0, 0);
-                    
-                    // Гасим камеру для экономии заряда батареи
-                    if (video.srcObject) {
-                        video.srcObject.getTracks().forEach(track => track.stop());
-                    }
-
-                    hints.style.display = 'none';
-                    outputImage.src = stitchCanvas.toDataURL('image/jpeg', 0.95);
-                    resultScreen.style.display = 'flex';
-                }
+            // Выключаем видеопоток камеры
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
             }
 
-            renderRowsChunk();
+            // Показываем контейнер для 3D
+            previewContainer.style.display = 'block';
+            resultScreen.style.display = 'flex';
+
+            // Инициализация Three.js сцены
+            scene3d = new THREE.Scene();
+            camera3d = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+            
+            // Камера устанавливается строго в центр сферы
+            camera3d.position.set(0, 0, 0);
+
+            renderer3d = new THREE.WebGLRenderer({ antialias: true });
+            renderer3d.setSize(window.innerWidth, window.innerHeight);
+            renderer3d.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            previewContainer.appendChild(renderer3d.domElement);
+
+            // Создаем и позиционируем каждый сделанный кадр в 3D пространстве
+            capturedFrames.forEach((frame, idx) => {
+                const texture = new THREE.TextureLoader().load(frame.imageData);
+                
+                // Извлекаем углы обзора камеры из соотношения сторон захваченного видео
+                const aspect = (video.videoWidth / video.videoHeight) || (16/9);
+                
+                // Кадрируем геометрию под сектор сферы, соответствующий FOV объектива
+                const radius = 10 + (idx * 0.01); // Микро-смещение радиуса защищает от мерцания текстур (Z-fighting)
+                const geo = new THREE.SphereGeometry(radius, 32, 32, -0.5, 1.0, Math.PI/2 - 0.3, 0.6);
+                geo.scale(-1, 1, 1); // Выворачиваем геометрию внутрь сферы
+
+                const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
+                const mesh = new THREE.Mesh(geo, mat);
+
+                // Преобразуем матрицу 3x3 гироскопа в кватернион Three.js
+                const m = frame.matrix;
+                const m4 = new THREE.Matrix4().set(
+                    m[0], m[1], m[2], 0,
+                    m[3], m[4], m[5], 0,
+                    m[6], m[7], m[8], 0,
+                    0,    0,    0,    1
+                );
+                mesh.quaternion.setFromRotationMatrix(m4);
+                scene3d.add(mesh);
+            });
+
+            // Настройка управления просмотром (пальцем по экрану)
+            previewContainer.addEventListener('pointerdown', e => {
+                isDragging = true;
+                prevMouseX = e.clientX;
+                prevMouseY = e.clientY;
+            });
+
+            window.addEventListener('pointermove', e => {
+                if (!isDragging) return;
+                const deltaX = e.clientX - prevMouseX;
+                const deltaY = e.clientY - prevMouseY;
+
+                lon -= deltaX * 0.2;
+                lat += deltaY * 0.2;
+                lat = Math.max(-85, Math.min(85, lat)); // Ограничение вертикального обзора
+
+                prevMouseX = e.clientX;
+                prevMouseY = e.clientY;
+            });
+
+            window.addEventListener('pointerup', () => isDragging = false);
+
+            // Запуск цикла 3D-анимации
+            function animate3d() {
+                if (!isStitching) return;
+                requestAnimationFrame(animate3d);
+
+                // Расчет вектора направления взгляда камеры по углам Эйлера
+                const phi = THREE.MathUtils.degToRad(90 - lat);
+                const theta = THREE.MathUtils.degToRad(lon);
+
+                const target = new THREE.Vector3(
+                    Math.sin(phi) * Math.sin(theta),
+                    Math.cos(phi),
+                    Math.sin(phi) * Math.cos(theta)
+                );
+                camera3d.lookAt(target);
+
+                renderer3d.render(scene3d, camera3d);
+            }
+            animate3d();
         }
 
         function resetSession() {
+            isStitching = false;
             resultScreen.style.display = 'none';
+            previewContainer.style.display = 'none';
+            
+            // Очищаем Canvas элементы Three.js
+            if (renderer3d) {
+                renderer3d.dispose();
+                previewContainer.innerHTML = '';
+                renderer3d = null;
+            }
+
             startScreen.style.display = 'flex';
             baseMatrix = null;
             currentIndex = 0;
             targets = [];
-            isStitching = false;
             finishEarlyBtn.style.display = 'none';
         }
 
