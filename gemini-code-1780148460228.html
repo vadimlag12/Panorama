@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>True 3D 360° Capture Studio</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        :root {
+            --neon: #00ffcc;
+            --bg-dark: #070a13;
+            --panel: rgba(15, 22, 42, 0.85);
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: var(--bg-dark);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: white;
+        }
+
+        #canvas-container { width: 100%; height: 100%; position: absolute; top:0; left:0; z-index: 1; }
+        #webcam-video { display: none; }
+
+        /* Интерфейс управления */
+        #ui-layer {
+            position: absolute; width: 100%; height: 100%; z-index: 10;
+            pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px;
+        }
+        .hud {
+            background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1); padding: 15px; border-radius: 18px;
+            pointer-events: auto; text-align: center;
+        }
+        
+        /* Кнопка затвора (фиксации кадра) */
+        .shoot-trigger {
+            width: 84px; height: 84px; background: white; border: 6px solid var(--neon);
+            border-radius: 50%; margin: 20px auto; pointer-events: auto;
+            box-shadow: 0 0 25px rgba(0, 255, 204, 0.5); cursor: pointer;
+            display: flex; align-items: center; justify-content: center; transition: transform 0.1s;
+        }
+        .shoot-trigger:active { transform: scale(0.9); background: var(--neon); }
+
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 20px; height: 20px; border: 2px solid var(--neon); border-radius: 50%;
+            pointer-events: none; z-index: 5; box-shadow: 0 0 8px var(--neon);
+        }
+
+        /* Экран старта */
+        #start-screen {
+            position: absolute; width: 100%; height: 100%; z-index: 100; background: var(--bg-dark);
+            display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 30px; text-align: center;
+        }
+        .btn {
+            background: linear-gradient(135deg, var(--neon), #00b3ff); color: black; border: none;
+            padding: 18px 36px; font-size: 1.1rem; font-weight: bold; border-radius: 50px;
+            cursor: pointer; box-shadow: 0 0 30px rgba(0, 255, 204, 0.4); width: 100%; max-width: 280px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="start-screen">
+        <h2 style="color: var(--neon); margin-bottom: 5px;">3D Сферическая Камера</h2>
+        <p style="color: #64748b; margin-bottom: 40px; font-size: 0.95rem;">Вращайте телефон, чтобы «замостить» панораму снимками реального мира</p>
+        <button class="btn" id="start-engine-btn">Запустить камеру</button>
+    </div>
+
+    <video id="webcam-video" autoplay playsinline muted></video>
+    <div id="canvas-container"></div>
+    <div id="crosshair"></div>
+
+    <div id="ui-layer" style="display: none;">
+        <div class="hud" id="top-panel">
+            <div style="font-size: 0.8rem; color: #94a3b8; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Сшивка 3D Панорамы</div>
+            <div id="counter" style="color: var(--neon); font-weight: bold; margin-top: 4px;">Снято кадров: 0</div>
+        </div>
+
+        <div>
+            <div class="shoot-trigger" id="capture-btn"></div>
+            <div class="hud" style="padding: 10px;">
+                <button id="save-studio-btn" style="background: none; border: none; color: var(--neon); font-weight: bold; font-size: 1rem; cursor: pointer; width: 100%;">
+                    💾 Сохранить 3D панораму для сайта
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer, videoTexture, livePreviewMesh;
+        let savedPatches = []; // Сюда сохраняем base64 картинок и их позиции
+        
+        // Переменные для вращения
+        let lon = 0, lat = 0;
+        let isUserInteracting = false;
+        let onPointerDownPointerX = 0, onPointerDownPointerY = 0;
+        let onPointerDownLon = 0, onPointerDownLat = 0;
+
+        const video = document.getElementById('webcam-video');
+        const startBtn = document.getElementById('start-engine-btn');
+        const startScreen = document.getElementById('start-screen');
+        const uiLayer = document.getElementById('ui-layer');
+        const captureBtn = document.getElementById('capture-btn');
+        const saveBtn = document.getElementById('save-studio-btn');
+        const counterDisplay = document.getElementById('counter');
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                // Запрашиваем заднюю камеру смартфона
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+                    audio: false
+                });
+                video.srcObject = stream;
+                video.play();
+
+                // Запрос гироскопа для iOS
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission === 'granted') {
+                        window.addEventListener('deviceorientation', onDeviceOrientation);
+                    }
+                } else {
+                    window.addEventListener('deviceorientation', onDeviceOrientation);
+                }
+
+                startScreen.style.display = 'none';
+                uiLayer.style.display = 'flex';
+
+                initWebGL();
+            } catch (err) {
+                alert("Доступ заблокирован. Нужен HTTPS протокол и разрешение на камеру. Ошибка: " + err.message);
+            }
+        });
+
+        function initWebGL() {
+            const container = document.getElementById('canvas-container');
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.target = new THREE.Vector3(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            // Текстура живого потока камеры
+            videoTexture = new THREE.VideoTexture(video);
+            
+            // Живой экран перед глазами (привязан к камере)
+            // Создаем плоскость с соотношением сторон кадра камеры (16:9)
+            const aspect = 16 / 9;
+            const geo = new THREE.PlaneGeometry(5 * aspect, 5);
+            const mat = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
+            livePreviewMesh = new THREE.Mesh(geo, mat);
+            
+            // Отодвигаем плоскость чуть вперед и крепим внутрь камеры
+            livePreviewMesh.position.set(0, 0, -4); 
+            camera.add(livePreviewMesh);
+            scene.add(camera);
+
+            // Обработчики для мышки/тачскрина (резервное управление, если нет гироскопа)
+            document.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('resize', onWindowResize);
+
+            animate();
+        }
+
+        // Обработка данных гироскопа смартфона
+        function onDeviceOrientation(e) {
+            if (e.alpha === null) return;
+            // Переводим углы мобильного датчика в углы обзора Three.js камеры
+            lon = e.alpha + 180; 
+            lat = e.beta - 90;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Ограничиваем вертикальный обзор, чтобы не перевернуться ног на голову
+            lat = Math.max(-85, Math.min(85, lat));
+            
+            const phi = THREE.MathUtils.degToRad(90 - lat);
+            const theta = THREE.MathUtils.degToRad(lon);
+
+            // Вычисляем точку направления камеры на основе углов
+            camera.target.x = Math.sin(phi) * Math.sin(theta);
+            camera.target.y = Math.cos(phi);
+            camera.target.z = Math.sin(phi) * Math.cos(theta);
+
+            camera.lookAt(camera.target);
+            renderer.render(scene, camera);
+        }
+
+        // ЛОГИКА СШИВКИ (ФИКСАЦИЯ КАДРА В СЦЕНЕ)
+        captureBtn.addEventListener('click', () => {
+            if (!video.videoWidth) return;
+
+            // 1. Копируем текущий кадр из видеопотока на скрытый canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            const imgData = canvas.toDataURL('image/jpeg', 0.8);
+
+            // 2. Создаем статичную 3D плоскость в пространстве сцены
+            const texture = new THREE.CanvasTexture(canvas);
+            const geo = livePreviewMesh.geometry.clone();
+            const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+            const staticPatch = new THREE.Mesh(geo, mat);
+
+            // 3. Магия позиционирования: считываем МИРОВЫЕ координаты живого экрана в этот миг
+            livePreviewMesh.getWorldPosition(staticPatch.position);
+            livePreviewMesh.getWorldQuaternion(staticPatch.quaternion);
+
+            // Добавляем готовый кусок в мировую сцену. Он останется там навсегда!
+            scene.add(staticPatch);
+
+            if (navigator.vibrate) navigator.vibrate(40); // Виброотклик
+
+            // Сохраняем данные для экспорта готового сайта
+            savedPatches.push({
+                img: imgData,
+                pos: [staticPatch.position.x, staticPatch.position.y, staticPatch.position.z],
+                rot: [staticPatch.rotation.x, staticPatch.rotation.y, staticPatch.rotation.z]
+            });
+
+            counterDisplay.innerText = `Снято кадров: ${savedPatches.length}`;
+        });
+
+        // ЭКСПОРТ РЕЗУЛЬТАТА ДЛЯ САЙТА
+        saveBtn.addEventListener('click', () => {
+            if (savedPatches.length === 0) {
+                alert("Сначала сделайте хотя бы пару снимков пространства!");
+                return;
+            }
+
+            // Генерируем чистый автономный HTML плеер, воссоздающий собранную сферу
+            const exportHtml = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Собранная 3D Панорама</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        #canvas { width: 100%; height: 100%; }
+    </style>
+</head>
+<body>
+    <div id="canvas"></div>
+    <script>
+        const patchesData = ${JSON.stringify(savedPatches)};
+        let scene, camera, renderer;
+        let lon = 0, lat = 0, pointerX = 0, pointerY = 0, lonDown = 0, latDown = 0;
+
+        function init() {
+            const container = document.getElementById('canvas');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.target = new THREE.Vector3(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            container.appendChild(renderer.domElement);
+
+            // Воссоздаем все сшитые кадры обратно в 3D
+            const aspect = 16 / 9;
+            const geo = new THREE.PlaneGeometry(5 * aspect, 5);
+
+            patchesData.forEach(data => {
+                const img = new Image();
+                img.src = data.img;
+                const texture = new THREE.Texture(img);
+                img.onload = () => { texture.needsUpdate = true; };
+
+                const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+                const mesh = new THREE.Mesh(geo, mat);
+                mesh.position.set(data.pos[0], data.pos[1], data.pos[2]);
+                mesh.rotation.set(data.rot[0], data.rot[1], data.rot[2]);
+                scene.add(mesh);
+            });
+
+            document.addEventListener('pointerdown', e => {
+                pointerX = e.clientX; pointerY = e.clientY;
+                lonDown = lon; latDown = lat;
+                document.addEventListener('pointermove', move);
+            });
+            document.addEventListener('pointerup', () => document.removeEventListener('pointermove', move));
+            
+            function move(e) {
+                lon = (pointerX - e.clientX) * 0.1 + lonDown;
+                lat = (e.clientY - pointerY) * 0.1 + latDown;
+            }
+
+            // Поддержка гироскопа при просмотре на мобилках
+            window.addEventListener('deviceorientation', e => {
+                if(e.alpha !== null) { lon = e.alpha + 180; lat = e.beta - 90; }
+            });
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            lat = Math.max(-85, Math.min(85, lat));
+            const phi = THREE.MathUtils.degToRad(90 - lat);
+            const theta = THREE.MathUtils.degToRad(lon);
+            camera.target.x = Math.sin(phi) * Math.sin(theta);
+            camera.target.y = Math.cos(phi);
+            camera.target.z = Math.sin(phi) * Math.cos(theta);
+            camera.lookAt(camera.target);
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+    <\/script>
+</body>
+</html>`;
+
+            const blob = new Blob([exportHtml], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ready-3d-sphere.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        });
+
+        // Вспомогательный код для управления пальцем/мышкой (для тестов)
+        function onPointerDown(e) {
+            if (e.target.tagName === 'BUTTON' || e.target.classList.contains('shoot-trigger')) return;
+            isUserInteracting = true;
+            onPointerDownPointerX = e.clientX;
+            onPointerDownPointerY = e.clientY;
+            onPointerDownLon = lon;
+            onPointerDownLat = lat;
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+        }
+        function onPointerMove(e) {
+            if (isUserInteracting === true) {
+                lon = (onPointerDownPointerX - e.clientX) * 0.1 + onPointerDownLon;
+                lat = (e.clientY - onPointerDownPointerY) * 0.1 + onPointerDownLat;
+            }
+        }
+        function onPointerUp() {
+            isUserInteracting = false;
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+        }
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+    </script>
+</body>
+</html>
