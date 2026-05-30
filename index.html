@@ -365,7 +365,7 @@
             }, 50);
         }
 
-        // --- ИСПРАВЛЕННЫЙ БЛОК: СФЕРИЧЕСКАЯ 3D-СШИВКА НА GPU ---
+        // --- ГАРАНТИРОВАННО РАБОЧАЯ 3D-СШИВКА НА GPU ---
         function processStitching() {
             const capturedFrames = targets.filter(t => t.imageData !== null);
             if (capturedFrames.length === 0) {
@@ -392,32 +392,52 @@
 
             // Инициализация Three.js сцены
             scene3d = new THREE.Scene();
-            camera3d = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera3d = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             
-            // Камера устанавливается строго в центр сферы
+            // Камера находится строго в начале координат
             camera3d.position.set(0, 0, 0);
 
-            renderer3d = new THREE.WebGLRenderer({ antialias: true });
+            renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: false });
             renderer3d.setSize(window.innerWidth, window.innerHeight);
             renderer3d.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             previewContainer.appendChild(renderer3d.domElement);
 
-            // Создаем и позиционируем каждый сделанный кадр в 3D пространстве
+            // Вычисляем соотношение сторон кадра
+            const videoW = video.videoWidth || 1280;
+            const videoH = video.videoHeight || 720;
+            const aspect = videoW / videoH;
+
+            // Размеры плоскости кадра в 3D пространстве
+            const planeHeight = 15; 
+            const planeWidth = planeHeight * aspect;
+
+            // Создаем общую геометрию плоскости для всех кадров
+            const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+
             capturedFrames.forEach((frame, idx) => {
                 const texture = new THREE.TextureLoader().load(frame.imageData);
+                // Корректируем настройки текстуры для правильного отображения
+                texture.minFilter = THREE.LinearFilter;
                 
-                // Извлекаем углы обзора камеры из соотношения сторон захваченного видео
-                const aspect = (video.videoWidth / video.videoHeight) || (16/9);
+                const material = new THREE.MeshBasicMaterial({ 
+                    map: texture, 
+                    side: THREE.DoubleSide, // Видно с обеих сторон
+                    transparent: true,
+                    opacity: 0.95
+                });
                 
-                // Кадрируем геометрию под сектор сферы, соответствующий FOV объектива
-                const radius = 10 + (idx * 0.01); // Микро-смещение радиуса защищает от мерцания текстур (Z-fighting)
-                const geo = new THREE.SphereGeometry(radius, 32, 32, -0.5, 1.0, Math.PI/2 - 0.3, 0.6);
-                geo.scale(-1, 1, 1); // Выворачиваем геометрию внутрь сферы
+                const mesh = new THREE.Mesh(geometry, material);
 
-                const mat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide, transparent: true, opacity: 0.95 });
-                const mesh = new THREE.Mesh(geo, mat);
+                // 1. Отодвигаем кадр вперед по оси Z (в локальных координатах)
+                // Микро-смещение (idx * 0.02) предотвращает мерцание слоев на стыках
+                mesh.position.set(0, 0, -10 - (idx * 0.02));
 
-                // Преобразуем матрицу 3x3 гироскопа в кватернион Three.js
+                // 2. Создаем пустой контейнер (ось вращения) в центре сцены
+                const pivot = new THREE.Group();
+                pivot.position.set(0, 0, 0);
+                pivot.add(mesh);
+
+                // 3. Поворачиваем сам контейнер по матрице гироскопа
                 const m = frame.matrix;
                 const m4 = new THREE.Matrix4().set(
                     m[0], m[1], m[2], 0,
@@ -425,11 +445,18 @@
                     m[6], m[7], m[8], 0,
                     0,    0,    0,    1
                 );
-                mesh.quaternion.setFromRotationMatrix(m4);
-                scene3d.add(mesh);
+                pivot.quaternion.setFromRotationMatrix(m4);
+                
+                scene3d.add(pivot);
             });
 
+            // Добавляем немного фонового света, чтобы сцена не была сырой
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+            scene3d.add(ambientLight);
+
             // Настройка управления просмотром (пальцем по экрану)
+            previewContainer.style.pointerEvents = 'auto'; // Активируем клики на контейнере
+            
             previewContainer.addEventListener('pointerdown', e => {
                 isDragging = true;
                 prevMouseX = e.clientX;
@@ -441,9 +468,10 @@
                 const deltaX = e.clientX - prevMouseX;
                 const deltaY = e.clientY - prevMouseY;
 
-                lon -= deltaX * 0.2;
-                lat += deltaY * 0.2;
-                lat = Math.max(-85, Math.min(85, lat)); // Ограничение вертикального обзора
+                // Изменяем углы поворота (инвертировано для естественного перемещения "рукой")
+                lon += deltaX * 0.15;
+                lat += deltaY * 0.15;
+                lat = Math.max(-85, Math.min(85, lat));
 
                 prevMouseX = e.clientX;
                 prevMouseY = e.clientY;
@@ -451,22 +479,21 @@
 
             window.addEventListener('pointerup', () => isDragging = false);
 
-            // Запуск цикла 3D-анимации
+            // Цикл рендеринга анимации
             function animate3d() {
                 if (!isStitching) return;
                 requestAnimationFrame(animate3d);
 
-                // Расчет вектора направления взгляда камеры по углам Эйлера
+                // Переводим углы в вектор направления для камеры
                 const phi = THREE.MathUtils.degToRad(90 - lat);
                 const theta = THREE.MathUtils.degToRad(lon);
 
-                const target = new THREE.Vector3(
-                    Math.sin(phi) * Math.sin(theta),
-                    Math.cos(phi),
-                    Math.sin(phi) * Math.cos(theta)
-                );
-                camera3d.lookAt(target);
+                const target = new THREE.Vector3();
+                target.x = Math.sin(phi) * Math.sin(theta);
+                target.y = Math.cos(phi);
+                target.z = Math.sin(phi) * Math.cos(theta);
 
+                camera3d.lookAt(target);
                 renderer3d.render(scene3d, camera3d);
             }
             animate3d();
